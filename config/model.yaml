@@ -1,0 +1,32 @@
+# runner.py
+seed: 1037
+opt_lr: 5.e-4  # AdamW主学习率
+lora_lr: 5.e-5
+weight_decay: 0.01
+epoch: 50
+batch_size: 64  # 可适当增大（非文本序列）
+train_subset_ratio: 1.0
+patience: 3
+valid_freq: 1
+
+# model.py
+model_path: ../../../../LLM/
+use_image: False
+use_text: False
+model_name: deepseek-7b
+peft_type: lora  # 或 'freeze'
+lora_rank: 8  # 仅q,v矩阵
+num_mixture: 2  # MixLogNormal组件数
+use_mixlognormal: false  # true使用似然估计，false使用Huber回归
+tem_enc_type: RoPE
+type_embeddings_path: ./embed
+use_quantization: true
+use_prompt: false
+time2vec_k: 64
+time_scale: 1
+loss_ratio: 1.0
+RCA_ratio: 0.0
+JEPA_ratio: 0.0
+RCA_type: binary
+
+prompt: "请你以自回归的形式预测这个事件序列的下一事件。"

@@ -1,0 +1,8 @@
+logs/
+result/
+bert/
+resnet/
+config/dataset.yaml
+__pycache__
+embed/
+CLIP/

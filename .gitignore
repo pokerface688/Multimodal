@@ -1,7 +1,12 @@
 __pycache__/
-*.sh
 result/
+embed/
+.ipynb_checkpoints/
+config/dataset.yaml
+.DS_Store
+logs/
 bert/
 resnet/
-embed/
+config/
+*.md
 CLIP/

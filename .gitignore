@@ -7,6 +7,7 @@ config/dataset.yaml
 logs/
 bert/
 resnet/
-config/
 *.md
 CLIP/
+literature/
+DecAlign/

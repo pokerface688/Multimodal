@@ -1,0 +1,20 @@
+---
+description: Before GitHub-related shell commands, set local proxy env vars
+alwaysApply: true
+---
+
+# GitHub / Git remote 命令前的代理
+
+在终端执行**与 GitHub 有关**的命令之前（例如 `git fetch`、`git pull`、`git push`、`git ls-remote`、`gh` CLI、访问 `github.com` 的 `curl`/`wget` 等），**先在同一 shell 会话里**执行：
+
+```bash
+export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890
+```
+
+然后再运行原计划命令。可将上述 `export` 与后续命令写在**一条**命令里，例如：
+
+```bash
+export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890 && git fetch origin
+```
+
+纯本地 Git 操作（不访问远程、不涉及 GitHub）不需要设置。

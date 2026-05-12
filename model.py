@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, TaskType, get_peft_model
 from torchvision import models, transforms
 from layer import Time2Vec, MixLogNormal, TypeHead, TimeHead, TimeHeadMLP, TimePositionalEncoding
+from decalign_event import DecAlignEventFusion
 from utils import compute_type_loss, compute_time_loss, compute_time_rmse, compute_type_acc, compute_RCA_loss, compute_JEPA_loss
 from logger import ProjectLogger
 
@@ -194,12 +195,54 @@ class EventPredictionModel(nn.Module):
         # ---------- 编码头 ----------
         self.tem_enc_type = model_config.tem_enc_type
         assert self.tem_enc_type in ["TimePositionEncoding", "RoPE"]
+        self.use_decalign = bool(getattr(model_config, "use_decalign", False))
+        self.lambda_decalign_dec = float(getattr(model_config, "lambda_decalign_dec", 0.0))
+        self.lambda_decalign_hete = float(getattr(model_config, "lambda_decalign_hete", 0.0))
+        self.lambda_decalign_homo = float(getattr(model_config, "lambda_decalign_homo", 0.0))
+
+        if self.use_decalign and self.tem_enc_type != "TimePositionEncoding":
+            raise ValueError("use_decalign requires tem_enc_type=TimePositionEncoding (time as M3 with shared tem_enc).")
 
         if self.tem_enc_type == "TimePositionEncoding":
             self.tem_enc = TimePositionalEncoding(self.embed_dim).to(self.device)
-            self.emb_up = nn.Linear(self.embed_dim * 2, self.hidden_size).to(self.device)
+            if not self.use_decalign:
+                self.emb_up = nn.Linear(self.embed_dim * 2, self.hidden_size).to(self.device)
         elif self.tem_enc_type == "RoPE":
             self.emb_up = nn.Linear(self.embed_dim, self.hidden_size).to(self.device)
+
+        if self.use_decalign:
+            d_dm = int(getattr(model_config, "decalign_d_model", self.embed_dim))
+            nh = int(getattr(model_config, "decalign_num_heads", 4))
+            nl = int(getattr(model_config, "decalign_nlevels", 2))
+            nk = int(getattr(model_config, "decalign_num_prototypes", 10))
+            ck = int(getattr(model_config, "decalign_conv1d_kernel_size", 1))
+            ad = float(getattr(model_config, "decalign_attn_dropout", 0.1))
+            ada = float(getattr(model_config, "decalign_attn_dropout_a", ad))
+            adv = float(getattr(model_config, "decalign_attn_dropout_v", ad))
+            lot = float(getattr(model_config, "decalign_lambda_ot", 0.1))
+            oti = int(getattr(model_config, "decalign_ot_num_iters", 50))
+            self.decalign_fusion = DecAlignEventFusion(
+                embed_dim=self.embed_dim,
+                hidden_size=self.hidden_size,
+                d_model=d_dm,
+                num_heads=nh,
+                nlevels=nl,
+                num_prototypes=nk,
+                conv1d_kernel_size=ck,
+                attn_dropout=ad,
+                attn_dropout_a=ada,
+                attn_dropout_v=adv,
+                lambda_ot=lot,
+                ot_num_iters=oti,
+            ).to(torch.bfloat16).to(self.device)
+            self.decalign_text_null = nn.Parameter(
+                torch.zeros(1, 1, self.embed_dim, device=self.device, dtype=torch.bfloat16)
+            )
+            nn.init.normal_(self.decalign_text_null, std=0.02)
+            if self.use_image:
+                self.decalign_img_merge = nn.Linear(
+                    self.hidden_size + self.embed_dim, self.hidden_size
+                ).to(torch.bfloat16).to(self.device)
 
         self.time_scale = model_config.time_scale
         self.loss_ratio = model_config.loss_ratio
@@ -413,40 +456,59 @@ class EventPredictionModel(nn.Module):
         masked_i_pos = None
         
         
-        #拼接
-        if self.fusion_required:
+        # 融合：非 DecAlign 路径下仍用 fusion_proj；DecAlign 路径下三路分离（类型 / 文本 / 时间），图像在 DecAlign 之后合并
+        if self.fusion_required and not self.use_decalign:
             embs = [event_embeddings]
-            if self.use_text: embs.append(self.encode_texts(batch['texts']))
-            if self.use_image: embs.append(self.encode_images(batch['image_paths']))
+            if self.use_text:
+                embs.append(self.encode_texts(batch['texts']))
+            if self.use_image:
+                embs.append(self.encode_images(batch['image_paths']))
             event_embeddings = self.fusion_proj(torch.cat(embs, dim=-1))
-        
 
-        # ======================================================
-            
- 
-              
-        bsz, seq_len = batch['time_delta_seqs'].shape
-        
-         # 1. 上投影并融合时间（替换原始event_embeddings为融合后的嵌入）
-        if self.tem_enc_type == "TimePositionEncoding":
-            tem_emb = self.tem_enc(time_delta_seqs)
-            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)  # 用融合嵌入替换原嵌入
-            event_emb = self.emb_up(cat_emb)
+        type_raw = batch['event_embeddings']
+        decalign_dec = torch.tensor(0.0, device=self.device)
+        decalign_hete = torch.tensor(0.0, device=self.device)
+        decalign_homo = torch.tensor(0.0, device=self.device)
 
+        if self.use_decalign:
+            if self.tem_enc_type != "TimePositionEncoding":
+                raise RuntimeError("use_decalign requires TimePositionEncoding.")
+            tem_emb = self.tem_enc(time_delta_seqs.to(type_raw.dtype))
+            if self.use_text:
+                text_emb = self.encode_texts(batch['texts']).to(type_raw.dtype)
+            else:
+                text_emb = self.decalign_text_null.expand(bsz, seq_len, -1).to(type_raw.dtype)
+            pad_m = batch_non_pad_mask.bool()
+            da = self.decalign_fusion(type_raw, text_emb, tem_emb, pad_m)
+            event_emb = da['event_hidden']
+            decalign_dec = da['dec_loss'].to(torch.float32)
+            decalign_hete = da['hete_loss'].to(torch.float32)
+            decalign_homo = da['homo_loss'].to(torch.float32)
+            if self.use_image:
+                img_e = self.encode_images(batch['image_paths']).to(type_raw.dtype)
+                event_emb = self.decalign_img_merge(torch.cat([event_emb, img_e], dim=-1))
             outputs = self.llm(
-                inputs_embeds=event_emb, 
-                output_hidden_states=True, 
+                inputs_embeds=event_emb,
+                output_hidden_states=True,
+                attention_mask=attention_mask,
+            )
+        elif self.tem_enc_type == "TimePositionEncoding":
+            tem_emb = self.tem_enc(time_delta_seqs)
+            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)
+            event_emb = self.emb_up(cat_emb)
+            outputs = self.llm(
+                inputs_embeds=event_emb,
+                output_hidden_states=True,
                 attention_mask=attention_mask,
             )
         elif self.tem_enc_type == "RoPE":
-            event_emb = self.emb_up(event_embeddings)  # 用融合嵌入替换原嵌入
-
+            event_emb = self.emb_up(event_embeddings)
             position_ids = self.time_to_position(time_seqs)
             outputs = self.llm(
-                inputs_embeds=event_emb, 
-                output_hidden_states=True, 
+                inputs_embeds=event_emb,
+                output_hidden_states=True,
                 attention_mask=attention_mask,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
         last_hidden = outputs.hidden_states[-1]
         
@@ -455,7 +517,11 @@ class EventPredictionModel(nn.Module):
         
         
         # ================== 总损失汇总 ==================
-        total_loss = 0.0
+        total_loss = (
+            self.lambda_decalign_dec * decalign_dec
+            + self.lambda_decalign_hete * decalign_hete
+            + self.lambda_decalign_homo * decalign_homo
+        )
         
         
         
@@ -489,6 +555,8 @@ class EventPredictionModel(nn.Module):
                     time_delta_seqs[i:i+1, 1:] * batch_non_pad_mask[i:i+1, :-1].float(),
                     reduction='sum'
                 )
+
+            RCA_loss = torch.tensor(0.0, device=self.device)
 
             # # 根因损失 多分类头
             if self.RCA_type == "multi":    
@@ -552,36 +620,54 @@ class EventPredictionModel(nn.Module):
         dataset_ids = batch['dataset_id']
         root_cause = batch['root_cause']
         
-        #拼接
-        if self.fusion_required:
+        # 融合与 LLM（与 forward 同路径）
+        if self.fusion_required and not self.use_decalign:
             embs = [event_embeddings]
-            if self.use_text: embs.append(self.encode_texts(batch['texts']))
-            if self.use_image: embs.append(self.encode_images(batch['image_paths']))
+            if self.use_text:
+                embs.append(self.encode_texts(batch['texts']))
+            if self.use_image:
+                embs.append(self.encode_images(batch['image_paths']))
             event_embeddings = self.fusion_proj(torch.cat(embs, dim=-1))
-        
 
+        type_raw = batch['event_embeddings']
         bsz, seq_len = batch['time_delta_seqs'].shape
-        
-         # 1. 上投影并融合时间（替换原始event_embeddings为融合后的嵌入）
-        if self.tem_enc_type == "TimePositionEncoding":
-            tem_emb = self.tem_enc(time_delta_seqs)
-            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)  # 用融合嵌入替换原嵌入
-            event_emb = self.emb_up(cat_emb)
 
+        if self.use_decalign:
+            if self.tem_enc_type != "TimePositionEncoding":
+                raise RuntimeError("use_decalign requires TimePositionEncoding.")
+            tem_emb = self.tem_enc(time_delta_seqs.to(type_raw.dtype))
+            if self.use_text:
+                text_emb = self.encode_texts(batch['texts']).to(type_raw.dtype)
+            else:
+                text_emb = self.decalign_text_null.expand(bsz, seq_len, -1).to(type_raw.dtype)
+            pad_m = batch_non_pad_mask.bool()
+            da = self.decalign_fusion(type_raw, text_emb, tem_emb, pad_m)
+            event_emb = da['event_hidden']
+            if self.use_image:
+                img_e = self.encode_images(batch['image_paths']).to(type_raw.dtype)
+                event_emb = self.decalign_img_merge(torch.cat([event_emb, img_e], dim=-1))
             outputs = self.llm(
-                inputs_embeds=event_emb, 
-                output_hidden_states=True, 
+                inputs_embeds=event_emb,
+                output_hidden_states=True,
+                attention_mask=attention_mask,
+            )
+        elif self.tem_enc_type == "TimePositionEncoding":
+            tem_emb = self.tem_enc(time_delta_seqs)
+            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)
+            event_emb = self.emb_up(cat_emb)
+            outputs = self.llm(
+                inputs_embeds=event_emb,
+                output_hidden_states=True,
                 attention_mask=attention_mask,
             )
         elif self.tem_enc_type == "RoPE":
-            event_emb = self.emb_up(event_embeddings)  # 用融合嵌入替换原嵌入
-
+            event_emb = self.emb_up(event_embeddings)
             position_ids = self.time_to_position(time_seqs)
             outputs = self.llm(
-                inputs_embeds=event_emb, 
-                output_hidden_states=True, 
+                inputs_embeds=event_emb,
+                output_hidden_states=True,
                 attention_mask=attention_mask,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
 
         last_hidden = outputs.hidden_states[-1]  # [B, S, D]

@@ -32,7 +32,10 @@ class Runner:
         for attr in ['gpu', 'model_name', 'load_model_path', 'evaluate_only', 'batch_size', 'epoch', 'peft_type', 
                     'use_mixlognormal', 'use_prompt', 'type_embeddings_path', 'time_scale', 'patience', 'model_path',
                     'lora_lr', 'opt_lr', 'train_subset_ratio', 'loss_ratio', 'RCA_ratio', 'JEPA_ratio', 'tem_enc_type', 'use_image', 'use_text',
-                    'RCA_type']:
+                    'RCA_type', 'lambda_decalign_dec', 'lambda_decalign_hete', 'lambda_decalign_homo',
+                    'decalign_d_model', 'decalign_num_heads', 'decalign_nlevels', 'decalign_num_prototypes',
+                    'decalign_conv1d_kernel_size', 'decalign_attn_dropout', 'decalign_attn_dropout_a', 'decalign_attn_dropout_v',
+                    'decalign_lambda_ot', 'decalign_ot_num_iters']:
             if getattr(args, attr, None) is not None:
                 setattr(self.model_config, attr, getattr(args, attr))
 

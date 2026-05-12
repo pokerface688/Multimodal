@@ -2,12 +2,13 @@ __pycache__/
 result/
 embed/
 .ipynb_checkpoints/
-config/dataset.yaml
 .DS_Store
 logs/
 bert/
 resnet/
 *.md
+!docs/
+!docs/**/*.md
 CLIP/
 literature/
 DecAlign/

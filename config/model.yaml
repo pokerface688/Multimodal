@@ -29,4 +29,20 @@ RCA_ratio: 0.0
 JEPA_ratio: 0.0
 RCA_type: binary
 
+# DecAlign 事件序列融合（需 tem_enc_type: TimePositionEncoding；默认关闭）
+use_decalign: false
+lambda_decalign_dec: 0.0
+lambda_decalign_hete: 0.0
+lambda_decalign_homo: 0.0
+decalign_d_model: 64
+decalign_num_heads: 4
+decalign_nlevels: 2
+decalign_num_prototypes: 10
+decalign_conv1d_kernel_size: 1
+decalign_attn_dropout: 0.1
+decalign_attn_dropout_a: 0.1
+decalign_attn_dropout_v: 0.1
+decalign_lambda_ot: 0.1
+decalign_ot_num_iters: 50
+
 prompt: "请你以自回归的形式预测这个事件序列的下一事件。"

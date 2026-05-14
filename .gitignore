@@ -9,3 +9,4 @@ bert/
 resnet/
 *.md
 CLIP/
+.pytest_cache/

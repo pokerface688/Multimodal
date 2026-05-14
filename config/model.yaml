@@ -18,7 +18,14 @@ peft_type: lora  # 或 'freeze'
 lora_rank: 8  # 仅q,v矩阵
 num_mixture: 2  # MixLogNormal组件数
 use_mixlognormal: false  # true使用似然估计，false使用Huber回归
-tem_enc_type: RoPE
+# MoIR 需 use_moir: true 且 tem_enc_type: TimePositionEncoding（RoPE 与 MoIR 互斥）
+tem_enc_type: TimePositionEncoding
+use_moir: true
+moir_exchange_ratio: 0.10
+moir_top_q: 64
+moir_token_subsample: 0
+moir_symmetric: true
+moir_init_alpha: 0.5
 type_embeddings_path: ./embed
 use_quantization: true
 use_prompt: false

@@ -2,7 +2,7 @@
 
 本文档描述本仓库内 **`DecAlign/`** 子目录中的实现：多模态情感分析（MOSI / MOSEI 回归，IEMOCAP 分类），对应论文 *DecAlign: Hierarchical Cross-Modal Alignment for Decoupled Multimodal Representation Learning*（ICLR 2026，[arXiv:2503.11892](https://arxiv.org/abs/2503.11892)）。
 
-> **注意**：根目录 `.gitignore` 使用 `*.md` 忽略一般 Markdown，但对 **`docs/`** 下文件配置了 **`!docs/**/*.md`**，因此 `docs/` 内文档可正常纳入 Git。更细的架构与对齐图解见 [DecAlign-architecture-detail.md](./DecAlign-architecture-detail.md)。
+> **注意**：根目录 `.gitignore` 使用 `*.md` 忽略一般 Markdown，但对 **`docs/`** 下文件配置了 **`!docs/**/*.md`**，因此 `docs/` 内文档可正常纳入 Git。更细的架构与对齐图解见 [DecAlign-architecture-detail.md](./DecAlign-architecture-detail.md)。**事件序列 `config/model.yaml` 中 DecAlign 超参如何选取** 见 [DecAlign-hyperparameters.md](./DecAlign-hyperparameters.md)。
 
 ---
 

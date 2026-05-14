@@ -2,7 +2,7 @@
 
 本文汇总 **`DecAlign/models/model.py`** 中的**解耦、异质对齐、同质对齐、融合与输出**的实现细节，并附 **Mermaid** 架构图，便于对照代码与论文。
 
-**相关文档**：[DecAlign-implementation.md](./DecAlign-implementation.md)（入口、配置、数据与训练循环）。
+**相关文档**：[DecAlign-implementation.md](./DecAlign-implementation.md)（入口、配置、数据与训练循环）；[DecAlign-hyperparameters.md](./DecAlign-hyperparameters.md)（`model.yaml` 中 DecAlign 相关超参选取与调参顺序）。
 
 ---
 
@@ -339,7 +339,7 @@ flowchart TB
 
 根目录 **`decalign_event.DecAlignEventFusion`** 将三路 **`[B,S,embed_dim]`**（类型、文本、时间 `tem_emb`）投影到内部维 **`d`**，复用与参考实现同构的 **解耦、`dec/hete/homo`、异质双路（`transformer_fusion` + 六路 CMA + `cma_proj`）**；**同质分支在融合表征上使用沿事件维的因果前缀 mean**（`fusion_rep_homo`），**异质子模块在事件维上使用因果 attention mask**（`decalign_transformer.build_causal_attn_mask`）。
 
-- **配置**：`config/model.yaml` 中 `use_decalign` 及 `lambda_decalign_*`、`decalign_*` 超参；**需** `tem_enc_type: TimePositionEncoding`；`tem_enc` 只前向一次，结果作为 M3，**不再**与 LLM 前 `cat(tem_emb)` 重复。
+- **配置**：`config/model.yaml` 中 `use_decalign` 及 `lambda_decalign_*`、`decalign_*` 超参；**需** `tem_enc_type: TimePositionEncoding`；`tem_enc` 只前向一次，结果作为 M3，**不再**与 LLM 前 `cat(tem_emb)` 重复。各键含义与调参顺序见 [DecAlign-hyperparameters.md](./DecAlign-hyperparameters.md)。
 - **图像**：若 `use_image`，在 DecAlign 输出 **`[B,S,hidden]`** 之后与 `encode_images` 结果 **`cat` 再经 `decalign_img_merge`**。
 - **与参考差异**：参考实现 CMA/Trans 取 **末时间步**；本集成对 **每个事件步** 保留 **全长序列输出** 再投影到 LLM 维。`compute_hetero_loss` / `compute_homo_loss` 仍与参考同式（时间维统计未改为严格因果 OT，见代码注释）。
 

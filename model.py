@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, TaskType, get_peft_model
 from torchvision import models, transforms
 from layer import Time2Vec, MixLogNormal, TypeHead, TimeHead, TimeHeadMLP, TimePositionalEncoding
+from moir_compensation import MoIR
 from utils import compute_type_loss, compute_time_loss, compute_time_rmse, compute_type_acc, compute_RCA_loss, compute_JEPA_loss
 from logger import ProjectLogger
 
@@ -195,11 +196,32 @@ class EventPredictionModel(nn.Module):
         self.tem_enc_type = model_config.tem_enc_type
         assert self.tem_enc_type in ["TimePositionEncoding", "RoPE"]
 
+        self.use_moir_post_fusion = bool(getattr(model_config, "use_moir_post_fusion", False))
+
         if self.tem_enc_type == "TimePositionEncoding":
             self.tem_enc = TimePositionalEncoding(self.embed_dim).to(self.device)
             self.emb_up = nn.Linear(self.embed_dim * 2, self.hidden_size).to(self.device)
         elif self.tem_enc_type == "RoPE":
-            self.emb_up = nn.Linear(self.embed_dim, self.hidden_size).to(self.device)
+            if self.use_moir_post_fusion:
+                self.tem_enc_moir = TimePositionalEncoding(self.embed_dim).to(self.device)
+                self.emb_up = nn.Linear(self.embed_dim * 2, self.hidden_size).to(self.device)
+            else:
+                self.emb_up = nn.Linear(self.embed_dim, self.hidden_size).to(self.device)
+
+        if self.use_moir_post_fusion:
+            self.moir_post = MoIR(
+                hidden_size=self.embed_dim,
+                exchange_ratio=float(getattr(model_config, "moir_exchange_ratio", 0.10)),
+                top_q=int(getattr(model_config, "moir_top_q", 64)),
+                token_subsample=int(getattr(model_config, "moir_token_subsample", 256)),
+                symmetric=bool(getattr(model_config, "moir_symmetric", True)),
+                init_alpha=float(getattr(model_config, "moir_init_alpha", 0.5)),
+            ).to(torch.bfloat16).to(self.device)
+            logger.info(
+                "MoIR post-fusion enabled (fused event stream <-> time encoding), "
+                f"exchange_ratio={self.moir_post.exchange_ratio}, top_q={self.moir_post.top_q}, "
+                f"token_subsample={self.moir_post.token_subsample}, symmetric={self.moir_post.symmetric}."
+            )
 
         self.time_scale = model_config.time_scale
         self.loss_ratio = model_config.loss_ratio
@@ -427,10 +449,15 @@ class EventPredictionModel(nn.Module):
               
         bsz, seq_len = batch['time_delta_seqs'].shape
         
-         # 1. 上投影并融合时间（替换原始event_embeddings为融合后的嵌入）
+         # 1. 上投影并融合时间（融合后可做 MoIR：融合流 <-> 时间编码）
+        vm = batch_non_pad_mask.bool()
         if self.tem_enc_type == "TimePositionEncoding":
             tem_emb = self.tem_enc(time_delta_seqs)
-            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)  # 用融合嵌入替换原嵌入
+            if self.use_moir_post_fusion:
+                event_embeddings, tem_emb = self.moir_post(
+                    event_embeddings, tem_emb, a_valid_mask=vm, b_valid_mask=vm
+                )
+            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)
             event_emb = self.emb_up(cat_emb)
 
             outputs = self.llm(
@@ -439,7 +466,15 @@ class EventPredictionModel(nn.Module):
                 attention_mask=attention_mask,
             )
         elif self.tem_enc_type == "RoPE":
-            event_emb = self.emb_up(event_embeddings)  # 用融合嵌入替换原嵌入
+            if self.use_moir_post_fusion:
+                tem_emb = self.tem_enc_moir(time_delta_seqs)
+                event_embeddings, tem_emb = self.moir_post(
+                    event_embeddings, tem_emb, a_valid_mask=vm, b_valid_mask=vm
+                )
+                cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)
+                event_emb = self.emb_up(cat_emb)
+            else:
+                event_emb = self.emb_up(event_embeddings)
 
             position_ids = self.time_to_position(time_seqs)
             outputs = self.llm(
@@ -562,10 +597,15 @@ class EventPredictionModel(nn.Module):
 
         bsz, seq_len = batch['time_delta_seqs'].shape
         
-         # 1. 上投影并融合时间（替换原始event_embeddings为融合后的嵌入）
+         # 1. 上投影并融合时间（融合后可做 MoIR：融合流 <-> 时间编码）
+        vm = batch_non_pad_mask.bool()
         if self.tem_enc_type == "TimePositionEncoding":
             tem_emb = self.tem_enc(time_delta_seqs)
-            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)  # 用融合嵌入替换原嵌入
+            if self.use_moir_post_fusion:
+                event_embeddings, tem_emb = self.moir_post(
+                    event_embeddings, tem_emb, a_valid_mask=vm, b_valid_mask=vm
+                )
+            cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)
             event_emb = self.emb_up(cat_emb)
 
             outputs = self.llm(
@@ -574,7 +614,15 @@ class EventPredictionModel(nn.Module):
                 attention_mask=attention_mask,
             )
         elif self.tem_enc_type == "RoPE":
-            event_emb = self.emb_up(event_embeddings)  # 用融合嵌入替换原嵌入
+            if self.use_moir_post_fusion:
+                tem_emb = self.tem_enc_moir(time_delta_seqs)
+                event_embeddings, tem_emb = self.moir_post(
+                    event_embeddings, tem_emb, a_valid_mask=vm, b_valid_mask=vm
+                )
+                cat_emb = torch.cat((event_embeddings, tem_emb), dim=-1)
+                event_emb = self.emb_up(cat_emb)
+            else:
+                event_emb = self.emb_up(event_embeddings)
 
             position_ids = self.time_to_position(time_seqs)
             outputs = self.llm(

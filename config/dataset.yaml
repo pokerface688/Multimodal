@@ -1,0 +1,184 @@
+taxi:
+  data_format: pkl
+  data_path: /data/run01/scxi244/EVENT/eventsfm/data/taxi/train.pkl
+  weight: 1.0
+  num_event_types: 10
+  type_descriptions:
+    '0': "纽约出租车事件序列数据集的0号事件。"
+    '1': "纽约出租车事件序列数据集的1号事件。"
+    '2': "纽约出租车事件序列数据集的2号事件。"
+    '3': "纽约出租车事件序列数据集的3号事件。"
+    '4': "纽约出租车事件序列数据集的4号事件。"
+    '5': "纽约出租车事件序列数据集的5号事件。"
+    '6': "纽约出租车事件序列数据集的6号事件。"
+    '7': "纽约出租车事件序列数据集的7号事件。"
+    '8': "纽约出租车事件序列数据集的8号事件。"
+    '9': "纽约出租车事件序列数据集的9号事件。"
+
+taobao:
+  data_format: pkl
+  data_path: /data/run01/scxi244/EVENT/eventsfm/data/taobao/train.pkl
+  weight: 1.0
+  num_event_types: 17
+  type_descriptions:
+    '0': "淘宝用户行为事件序列数据集的0号事件。"
+    '1': "淘宝用户行为事件序列数据集的1号事件。"
+    '2': "淘宝用户行为事件序列数据集的2号事件。"
+    '3': "淘宝用户行为事件序列数据集的3号事件。"
+    '4': "淘宝用户行为事件序列数据集的4号事件。"
+    '5': "淘宝用户行为事件序列数据集的5号事件。"
+    '6': "淘宝用户行为事件序列数据集的6号事件。"
+    '7': "淘宝用户行为事件序列数据集的7号事件。"
+    '8': "淘宝用户行为事件序列数据集的8号事件。"
+    '9': "淘宝用户行为事件序列数据集的9号事件。"
+    '10': "淘宝用户行为事件序列数据集的10号事件。"
+    '11': "淘宝用户行为事件序列数据集的11号事件。"
+    '12': "淘宝用户行为事件序列数据集的12号事件。"
+    '13': "淘宝用户行为事件序列数据集的13号事件。"
+    '14': "淘宝用户行为事件序列数据集的14号事件。"
+    '15': "淘宝用户行为事件序列数据集的15号事件。"
+    '16': "淘宝用户行为事件序列数据集的16号事件。"
+
+retweet:
+  data_format: pkl
+  data_path: /data/run01/scxi244/EVENT/eventsfm/data/retweet/train.pkl
+  weight: 1.0
+  num_event_types: 3
+  type_descriptions:
+    '0': "推特转发序列数据集的0号事件类型表示一条推特由粉丝数量少于120的用户转发。"
+    '1': "推特转发序列数据集的1号事件类型表示一条推特由粉丝数量在120到1263之间的用户转发。"
+    '2': "推特转发序列数据集的2号事件类型表示一条推特由粉丝数量大于1263的用户转发。"
+
+amazon:
+  data_format: pkl
+  data_path: /data/run01/scxi244/EVENT/eventsfm/data/amazon/train.pkl
+  weight: 1.0
+  num_event_types: 16
+  type_descriptions:
+    '0': "亚马逊购物序列数据集的0号事件类型表示用户购买服饰类商品，涵盖上衣、裤装、外套等日常穿着。"
+    '1': "亚马逊购物序列数据集的1号事件类型表示用户购买鞋靴类商品，包含运动鞋、休闲鞋、正装鞋等。"
+    '2': "亚马逊购物序列数据集的2号事件类型表示用户购买配饰类商品，如围巾、帽子、腰带等。"
+    '3': "亚马逊购物序列数据集的3号事件类型表示用户购买珠宝类商品，如项链、戒指、耳环等。"
+    '4': "亚马逊购物序列数据集的4号事件类型表示用户购买新奇或特色商品，以及难以归类的其他商品。"
+    '5': "亚马逊购物序列数据集的5号事件类型表示用户购买手表类商品。"
+    '6': "亚马逊购物序列数据集的6号事件类型表示用户购买制服、工装或安全防护类服饰。"
+    '7': "亚马逊购物序列数据集的7号事件类型表示用户购买行李箱或旅行相关装备。"
+    '8': "亚马逊购物序列数据集的8号事件类型表示用户购买演出服装或相关配件。"
+    '9': "亚马逊购物序列数据集的9号事件类型表示用户购买女童服饰类商品。"
+    '10': "亚马逊购物序列数据集的10号事件类型表示用户购买男童服饰类商品。"
+    '11': "亚马逊购物序列数据集的11号事件类型表示用户购买鞋类、珠宝或手表的配件，如鞋垫、表带、首饰盒等。"
+    '12': "亚马逊购物序列数据集的12号事件类型表示用户购买婴幼儿服饰或用品。"
+    '13': "亚马逊购物序列数据集的13号事件类型表示用户购买手提包或钱包类商品。"
+    '14': "亚马逊购物序列数据集的14号事件类型表示用户购买冲浪、滑板或街头风格相关服饰与用品。"
+    '15': "亚马逊购物序列数据集的15号事件类型表示用户购买其他特殊类别商品，如设计师品牌、大码服饰、孕妇装、传统或民族服饰等。"
+
+stackoverflow:
+  data_format: pkl
+  data_path: /data/data/stackoverflow/train.pkl
+  weight: 1.0
+  num_event_types: 22
+
+
+Kunlun:
+  data_format: pkl
+  data_path: /data/data/RCA1024/Kunlun/train.pkl
+  weight: 1.0
+  num_event_types: 42
+
+Tianshan:
+  data_format: pkl
+  data_path: /data/data/RCA1024/Tianshan/train.pkl
+  weight: 1.0
+  num_event_types: 52
+
+Wuyi:
+  data_format: pkl
+  data_path: /data/data/RCA1024/Wuyi/train.pkl
+  weight: 1.0
+  num_event_types: 49
+
+V3:
+  data_format: pkl
+  data_path: /data/data/RCA1024/V3/train.pkl
+  weight: 1.0
+  num_event_types: 46
+    
+# amazon_year_window:
+#   data_format: h5
+#   data_path: ../../data/Amazon-Hardcover/hdf5_year_window/train.h5
+#   weight: 1.0
+#   num_event_types: 30
+#   type_descriptions:
+Danmaku:
+  data_format: pkl
+  data_path: ./Danmaku/Events/train.pkl
+  weight: 1.0
+  num_event_types: 9
+  type_descriptions:
+    '0': "哔哩哔哩弹幕数据集的0号事件类型表示个人经历/感受（分享自身故事、情绪、体验）"
+    '1': "哔哩哔哩弹幕数据集的1号事件类型表示刷屏（重复内容、无意义刷屏、刷节奏）"
+    '2': "哔哩哔哩弹幕数据集的2号事件类型表示无关内容/跑题（和视频内容无关）"
+    '3': "哔哩哔哩弹幕数据集的3号事件类型表示无意义文本（乱码、乱打、无实际含义）"
+    '4': "哔哩哔哩弹幕数据集的4号事件类型表示引用/复述（引用台词、歌词、他人发言）"
+    '5': "哔哩哔哩弹幕数据集的5号事件类型表示幽默/梗（搞笑、玩梗、段子、趣味评论）"
+    '6': "哔哩哔哩弹幕数据集的6号事件类型表示批评评论（吐槽、质疑、负面评价）"
+    '7': "哔哩哔哩弹幕数据集的7号事件类型表示提问（询问信息、剧情、细节、原因）"
+    '8': "哔哩哔哩弹幕数据集的8号事件类型表示社交互动（打招呼、互动聊天、感谢、应援）"
+    
+Taxipro:
+  data_format: pkl
+  data_path: ./Taxipro/Events/train.pkl
+  weight: 1.0
+  num_event_types: 6
+  
+weather:
+  data_format: pkl
+  data_path: ./weather/Events/train.pkl
+  weight: 1.0
+  num_event_types: 18
+  type_descriptions:
+    '0': "天气数据集的0号事件类型表示Debris Flow。"
+    '1': "天气数据集的1号事件类型表示Dense Fog。"
+    '2': "天气数据集的2号事件类型表示Dust Devil。"
+    '3': "天气数据集的3号事件类型表示Flash Flood。"
+    '4': "天气数据集的4号事件类型表示Flood。"
+    '5': "天气数据集的5号事件类型表示Funnel Cloud。"
+    '6': "天气数据集的6号事件类型表示Hail。"
+    '7': "天气数据集的7号事件类型表示Heavy Rain。"
+    '8': "天气数据集的8号事件类型表示Lightning。"
+    '9': "天气数据集的9号事件类型表示Marine Hail。"
+    '10': "天气数据集的10号事件类型表示Marine High Wind。"
+    '11': "天气数据集的11号事件类型表示Marine Lightning。"
+    '12': "天气数据集的12号事件类型表示Marine Strong Wind。"
+    '13': "天气数据集的13号事件类型表示Marine Thunderstorm Wind。"
+    '14': "天气数据集的14号事件类型表示Thunderstorm Wind。"
+    '15': "天气数据集的15号事件类型表示Tornado。"
+    '16': "天气数据集的16号事件类型表示Tropical Storm。"
+    '17': "天气数据集的17号事件类型表示Waterspout。"
+    
+XTraffic:
+  data_format: pkl
+  data_path: ./XTraffic/Events/train.pkl
+  weight: 1.0
+  num_event_types: 8
+  type_descriptions:
+    '0': "XTraffic 数据集的 0 号事件类型表示 1141（需急救事故）。"
+    '1': "XTraffic 数据集的 1 号事件类型表示 AHazard / AnimalHazard（动物隐患）。"
+    '2': "XTraffic 数据集的 2 号事件类型表示 CarFire（车辆火灾）。"
+    '3': "XTraffic 数据集的 3 号事件类型表示 Fire（火灾无伤亡；原始标签为 Fire，对应你所说的 Fire NoInj）。"
+    '4': "XTraffic 数据集的 4 号事件类型表示 Hazard（一般隐患）。"
+    '5': "XTraffic 数据集的 5 号事件类型表示 NoInj（无伤亡事故）。"
+    '6': "XTraffic 数据集的 6 号事件类型表示 Other（其它未在细分类中的类型）。"
+    '7': "XTraffic 数据集的 7 号事件类型表示 UnknInj（伤亡未知；对应 UnknownInjure）。"
+    
+SCEDC:
+  data_format: pkl
+  data_path:./SCEDC/Events/train.pkl
+  weight: 1.0
+  num_event_types: 5
+  type_descriptions:
+    '0': "SCEDC 数据集的 0 号事件类型表示震级区间 1≤M<3（微震/弱震）。"
+    '1': "SCEDC 数据集的 1 号事件类型表示震级区间 3≤M<4.5（有感地震）。"
+    '2': "SCEDC 数据集的 2 号事件类型表示震级区间 4.5≤M<6（中强地震）。"
+    '3': "SCEDC 数据集的 3 号事件类型表示震级区间 6≤M<7（强震）。"
+    '4': "SCEDC 数据集的 4 号事件类型表示震级区间 7≤M<8（大地震）。"

@@ -2,11 +2,11 @@ __pycache__/
 result/
 embed/
 .ipynb_checkpoints/
-config/dataset.yaml
 .DS_Store
 logs/
 bert/
 resnet/
-config/
 *.md
 CLIP/
+.pytest_cache/
+tests/

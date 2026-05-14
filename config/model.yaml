@@ -10,7 +10,7 @@ patience: 3
 valid_freq: 1
 
 # model.py
-model_path: ../../../../LLM/
+model_path: ../../zhangjiping/event_squence/LLM/
 use_image: False
 use_text: False
 model_name: deepseek-7b

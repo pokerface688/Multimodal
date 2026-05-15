@@ -31,9 +31,9 @@ RCA_type: binary
 
 # DecAlign 事件序列融合（需 tem_enc_type: TimePositionEncoding；默认关闭）
 use_decalign: true
-lambda_decalign_dec: 0.0
-lambda_decalign_hete: 0.0
-lambda_decalign_homo: 0.0
+lambda_decalign_dec: 0.1
+lambda_decalign_hete: 0.1
+lambda_decalign_homo: 0.1
 decalign_d_model: 64
 decalign_num_heads: 4
 decalign_nlevels: 2

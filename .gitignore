@@ -7,9 +7,8 @@ logs/
 bert/
 resnet/
 *.md
-!docs/
-!docs/**/*.md
 CLIP/
 literature/
 DecAlign/
 .vscode/
+.pytest_cache/

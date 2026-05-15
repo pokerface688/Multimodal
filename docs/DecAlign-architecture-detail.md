@@ -337,11 +337,13 @@ flowchart TB
 
 ## 14. 事件序列仓库集成（`decalign_event.py` / `model.py`）
 
-根目录 **`decalign_event.DecAlignEventFusion`** 将三路 **`[B,S,embed_dim]`**（类型、文本、时间 `tem_emb`）投影到内部维 **`d`**，复用与参考实现同构的 **解耦、`dec/hete/homo`、异质双路（`transformer_fusion` + 六路 CMA + `cma_proj`）**；**同质分支在融合表征上使用沿事件维的因果前缀 mean**（`fusion_rep_homo`），**异质子模块在事件维上使用因果 attention mask**（`decalign_transformer.build_causal_attn_mask`）。
+当前实现使用 **`decalign_event.ModalityAlignFusion`**（`DecAlignEventFusion` 为其三槽位 `(0,1,2)` 的兼容别名）。对齐支路为 **文本 / 图像 / skipgram** 三个槽位中的子集，由配置 `use_text`、`use_image`、`use_skipgram` 决定 `active_indices`；若三者均为关且 `use_decalign: true`，则退化为 **单槽位 (2)**，用 **`event_embeddings`（类型嵌入）** 作为 skipgram 槽输入，以便与旧「仅类型」配置兼容。
 
-- **配置**：`config/model.yaml` 中 `use_decalign` 及 `lambda_decalign_*`、`decalign_*` 超参；**需** `tem_enc_type: TimePositionEncoding`；`tem_enc` 只前向一次，结果作为 M3，**不再**与 LLM 前 `cat(tem_emb)` 重复。
-- **图像**：若 `use_image`，在 DecAlign 输出 **`[B,S,hidden]`** 之后与 `encode_images` 结果 **`cat` 再经 `decalign_img_merge`**。
-- **与参考差异**：参考实现 CMA/Trans 取 **末时间步**；本集成对 **每个事件步** 保留 **全长序列输出** 再投影到 LLM 维。`compute_hetero_loss` / `compute_homo_loss` 仍与参考同式（时间维统计未改为严格因果 OT，见代码注释）。
+- **时间**：`TimePositionalEncoding` 在 **`ModalityAlignFusion` 之后** 与 `event_partial` 在最后一维拼接，经 **`decalign_post_time: Linear(hidden_size + embed_dim, hidden_size)`** 得到送入 LLM 的 `inputs_embeds`。时间**不再**参与解耦与异质/同质对齐。
+- **异质原型**：每个数据集在 `model.py` 中持有独立的 `align_fusion[dataset_name]`，**`num_prototypes = max(2, 2 × num_event_types)`**（`dataset.yaml` 中该集的 `num_event_types`）。混合 batch 时按 `dataset_id` **分组**前向，对齐损失按组内样本数加权平均。
+- **损失与两阶段训练**：`dec_loss` / `hete_loss` / `homo_loss` / 可选 `recon_loss`（`lambda_decalign_recon > 0` 且模块 `use_recon`）与下游 `type_loss`、`time_loss` 相加。若 `align_pretrain_epochs > 0`，当 `epoch ≤ align_pretrain_epochs` 时使用 `lambda_decalign_*_warm` 与 `loss_ratio_warm`，否则使用 `*_main` 与 `loss_ratio_main`（`runner.train` 将 `epoch` 传入 `forward`）。
+- **数据**：可选 `skipgram_embeddings` 表（与 `type_embeddings` 同结构），由 `dataset.DataCollatorEventEmbedding` 写入 batch；路径由 `skipgram_embeddings_path` 与 `use_skipgram` 控制。
+- **与参考 DecAlign 差异**：异质 OT 在 **M=3** 时仍为三边际 Sinkhorn，**M=2** 时为双边际 Sinkhorn；**M=1** 时 `hete_loss` 与 `homo_loss` 为 0。CMA/Transformer 仍沿事件维使用因果 mask（`decalign_transformer.build_causal_attn_mask`）。
 
 ---
 

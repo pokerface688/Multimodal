@@ -6,12 +6,12 @@ from PIL import Image
 # 屏蔽Pillow的PNG调试日志
 import logging
 logging.getLogger("PIL").setLevel(logging.WARNING)  # 只显示警告及以上，屏蔽DEBUG/INFO
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, AutoModel
 from peft import LoraConfig, TaskType, get_peft_model
 from torchvision import models, transforms
 from layer import Time2Vec, MixLogNormal, TypeHead, TimeHead, TimeHeadMLP, TimePositionalEncoding
-from decalign_event import DecAlignEventFusion
+from decalign_event import ModalityAlignFusion
 from utils import compute_type_loss, compute_time_loss, compute_time_rmse, compute_type_acc, compute_RCA_loss, compute_JEPA_loss
 from logger import ProjectLogger
 
@@ -43,7 +43,11 @@ class EventPredictionModel(nn.Module):
         model_path = model_config.model_path + model_config.model_name
         self.use_image = model_config.use_image
         self.use_text = model_config.use_text
-        type_embed = torch.load(type_embeddings_path, weights_only=True)
+        self.use_skipgram = bool(getattr(model_config, "use_skipgram", False))
+        try:
+            type_embed = torch.load(type_embeddings_path, weights_only=True)
+        except TypeError:
+            type_embed = torch.load(type_embeddings_path)
         self.type_embeddings = {k: v.to(torch.bfloat16) for k, v in type_embed.items()}
         # 验证嵌入维度一致性
         sample_emb = list(self.type_embeddings.values())[0]
@@ -183,10 +187,10 @@ class EventPredictionModel(nn.Module):
             ).to(torch.bfloat16).to(self.device)
         
         # ========== 融合层：开关都关 = 直接用原始嵌入 ==========
-        self.fusion_required = self.use_image or self.use_text
+        self.fusion_required = self.use_image or self.use_text or self.use_skipgram
         if self.fusion_required:
             
-            in_dim = self.embed_dim * (1 + self.use_text + self.use_image)
+            in_dim = self.embed_dim * (1 + self.use_text + self.use_image + self.use_skipgram)
             
             # 注释掉原来的 fusion_proj
             self.fusion_proj = nn.Linear(in_dim, self.embed_dim).to(torch.bfloat16).to(self.device)
@@ -199,9 +203,21 @@ class EventPredictionModel(nn.Module):
         self.lambda_decalign_dec = float(getattr(model_config, "lambda_decalign_dec", 0.0))
         self.lambda_decalign_hete = float(getattr(model_config, "lambda_decalign_hete", 0.0))
         self.lambda_decalign_homo = float(getattr(model_config, "lambda_decalign_homo", 0.0))
+        self.lambda_decalign_recon = float(getattr(model_config, "lambda_decalign_recon", 0.0))
+        self.align_pretrain_epochs = int(getattr(model_config, "align_pretrain_epochs", 0))
+        self.lambda_decalign_dec_warm = float(getattr(model_config, "lambda_decalign_dec_warm", self.lambda_decalign_dec))
+        self.lambda_decalign_hete_warm = float(getattr(model_config, "lambda_decalign_hete_warm", self.lambda_decalign_hete))
+        self.lambda_decalign_homo_warm = float(getattr(model_config, "lambda_decalign_homo_warm", self.lambda_decalign_homo))
+        self.lambda_decalign_recon_warm = float(getattr(model_config, "lambda_decalign_recon_warm", self.lambda_decalign_recon))
+        self.lambda_decalign_dec_main = float(getattr(model_config, "lambda_decalign_dec_main", self.lambda_decalign_dec))
+        self.lambda_decalign_hete_main = float(getattr(model_config, "lambda_decalign_hete_main", self.lambda_decalign_hete))
+        self.lambda_decalign_homo_main = float(getattr(model_config, "lambda_decalign_homo_main", self.lambda_decalign_homo))
+        self.lambda_decalign_recon_main = float(getattr(model_config, "lambda_decalign_recon_main", self.lambda_decalign_recon))
+        self.loss_ratio_warm = float(getattr(model_config, "loss_ratio_warm", model_config.loss_ratio))
+        self.loss_ratio_main = float(getattr(model_config, "loss_ratio_main", model_config.loss_ratio))
 
         if self.use_decalign and self.tem_enc_type != "TimePositionEncoding":
-            raise ValueError("use_decalign requires tem_enc_type=TimePositionEncoding (time as M3 with shared tem_enc).")
+            raise ValueError("use_decalign requires tem_enc_type=TimePositionEncoding (tem_enc for time after alignment).")
 
         if self.tem_enc_type == "TimePositionEncoding":
             self.tem_enc = TimePositionalEncoding(self.embed_dim).to(self.device)
@@ -210,39 +226,85 @@ class EventPredictionModel(nn.Module):
         elif self.tem_enc_type == "RoPE":
             self.emb_up = nn.Linear(self.embed_dim, self.hidden_size).to(self.device)
 
+        if self.use_skipgram:
+            sp = getattr(model_config, "skipgram_embeddings_path", None)
+            if not sp:
+                raise ValueError("use_skipgram=True requires model_config.skipgram_embeddings_path")
+            try:
+                sg = torch.load(sp, map_location="cpu", weights_only=True)
+            except TypeError:
+                sg = torch.load(sp, map_location="cpu")
+            sg_dim = list(sg.values())[0].shape[1]
+            if sg_dim != self.embed_dim:
+                self.skipgram_proj = nn.Linear(sg_dim, self.embed_dim, bias=False).to(torch.bfloat16).to(self.device)
+            else:
+                self.skipgram_proj = nn.Identity()
+        else:
+            self.skipgram_proj = nn.Identity()
+
         if self.use_decalign:
             d_dm = int(getattr(model_config, "decalign_d_model", self.embed_dim))
             nh = int(getattr(model_config, "decalign_num_heads", 4))
             nl = int(getattr(model_config, "decalign_nlevels", 2))
-            nk = int(getattr(model_config, "decalign_num_prototypes", 10))
             ck = int(getattr(model_config, "decalign_conv1d_kernel_size", 1))
             ad = float(getattr(model_config, "decalign_attn_dropout", 0.1))
             ada = float(getattr(model_config, "decalign_attn_dropout_a", ad))
             adv = float(getattr(model_config, "decalign_attn_dropout_v", ad))
             lot = float(getattr(model_config, "decalign_lambda_ot", 0.1))
             oti = int(getattr(model_config, "decalign_ot_num_iters", 50))
-            self.decalign_fusion = DecAlignEventFusion(
-                embed_dim=self.embed_dim,
-                hidden_size=self.hidden_size,
-                d_model=d_dm,
-                num_heads=nh,
-                nlevels=nl,
-                num_prototypes=nk,
-                conv1d_kernel_size=ck,
-                attn_dropout=ad,
-                attn_dropout_a=ada,
-                attn_dropout_v=adv,
-                lambda_ot=lot,
-                ot_num_iters=oti,
-            ).to(torch.bfloat16).to(self.device)
+            self.decalign_use_recon = float(getattr(model_config, "lambda_decalign_recon", 0.0)) > 0
+
+            active = tuple(i for i, on in enumerate([self.use_text, self.use_image, self.use_skipgram]) if on)
+            self.align_fallback_type_to_skipgram_slot = False
+            if len(active) < 1:
+                self.align_fallback_type_to_skipgram_slot = True
+                active = (2,)
+            M = len(active)
+            if (M * d_dm) % nh != 0:
+                raise ValueError(f"decalign: (M*d_model)={M * d_dm} must be divisible by decalign_num_heads={nh}")
+            if d_dm % nh != 0:
+                raise ValueError(f"decalign: d_model={d_dm} must be divisible by decalign_num_heads={nh}")
+            mem_in = (M - 1) * d_dm if M > 1 else d_dm
+            if M > 1 and mem_in % nh != 0:
+                raise ValueError(f"decalign: (M-1)*d_model={mem_in} must be divisible by decalign_num_heads={nh}")
+            self.align_active_indices = active
+
+            self.align_fusion = nn.ModuleDict()
+            for name, spec in data_config.items():
+                nk = max(2, 2 * int(spec.num_event_types))
+                self.align_fusion[name] = ModalityAlignFusion(
+                    embed_dim=self.embed_dim,
+                    hidden_size=self.hidden_size,
+                    d_model=d_dm,
+                    num_heads=nh,
+                    nlevels=nl,
+                    num_prototypes=nk,
+                    active_indices=active,
+                    conv1d_kernel_size=ck,
+                    attn_dropout=ad,
+                    attn_dropout_a=ada,
+                    attn_dropout_v=adv,
+                    lambda_ot=lot,
+                    ot_num_iters=oti,
+                    use_recon=self.decalign_use_recon,
+                ).to(torch.bfloat16).to(self.device)
+
             self.decalign_text_null = nn.Parameter(
                 torch.zeros(1, 1, self.embed_dim, device=self.device, dtype=torch.bfloat16)
             )
+            self.decalign_image_null = nn.Parameter(
+                torch.zeros(1, 1, self.embed_dim, device=self.device, dtype=torch.bfloat16)
+            )
+            self.decalign_skipgram_null = nn.Parameter(
+                torch.zeros(1, 1, self.embed_dim, device=self.device, dtype=torch.bfloat16)
+            )
             nn.init.normal_(self.decalign_text_null, std=0.02)
-            if self.use_image:
-                self.decalign_img_merge = nn.Linear(
-                    self.hidden_size + self.embed_dim, self.hidden_size
-                ).to(torch.bfloat16).to(self.device)
+            nn.init.normal_(self.decalign_image_null, std=0.02)
+            nn.init.normal_(self.decalign_skipgram_null, std=0.02)
+
+            self.decalign_post_time = nn.Linear(self.hidden_size + self.embed_dim, self.hidden_size).to(
+                torch.bfloat16
+            ).to(self.device)
 
         self.time_scale = model_config.time_scale
         self.loss_ratio = model_config.loss_ratio
@@ -310,6 +372,47 @@ class EventPredictionModel(nn.Module):
         self.log_sigma_time = nn.Parameter(
             torch.tensor(0.0, device=self.device, dtype=torch.bfloat16)
         )
+
+    def _align_schedule(self, epoch: int):
+        if self.align_pretrain_epochs > 0 and epoch <= self.align_pretrain_epochs:
+            return (
+                self.lambda_decalign_dec_warm,
+                self.lambda_decalign_hete_warm,
+                self.lambda_decalign_homo_warm,
+                self.lambda_decalign_recon_warm,
+                self.loss_ratio_warm,
+            )
+        return (
+            self.lambda_decalign_dec_main,
+            self.lambda_decalign_hete_main,
+            self.lambda_decalign_homo_main,
+            self.lambda_decalign_recon_main,
+            self.loss_ratio_main,
+        )
+
+    def _modality_inputs_for_align(self, batch, bsz, seq_len, dtype):
+        if getattr(self, "align_fallback_type_to_skipgram_slot", False):
+            text_emb = self.decalign_text_null.expand(bsz, seq_len, -1).to(dtype)
+            img_emb = self.decalign_image_null.expand(bsz, seq_len, -1).to(dtype)
+            skipgram_emb = batch["event_embeddings"].to(dtype)
+            return text_emb, img_emb, skipgram_emb
+        if self.use_text:
+            text_emb = self.encode_texts(batch["texts"]).to(dtype)
+        else:
+            text_emb = self.decalign_text_null.expand(bsz, seq_len, -1).to(dtype)
+        if self.use_image:
+            img_emb = self.encode_images(batch["image_paths"]).to(dtype)
+        else:
+            img_emb = self.decalign_image_null.expand(bsz, seq_len, -1).to(dtype)
+        if getattr(self, "align_fallback_type_to_skipgram_slot", False):
+            skipgram_emb = batch["event_embeddings"].to(dtype)
+        elif self.use_skipgram:
+            sk = batch["skipgram_embeddings"].to(self.device).to(dtype)
+            skipgram_emb = self.skipgram_proj(sk)
+        else:
+            skipgram_emb = self.decalign_skipgram_null.expand(bsz, seq_len, -1).to(dtype)
+        return text_emb, img_emb, skipgram_emb
+
     def time_to_position(self, time_seqs):
         """
         将时间戳映射到RoPE位置索引
@@ -320,7 +423,7 @@ class EventPredictionModel(nn.Module):
         """
         position_ids = (time_seqs * self.time_scale)  # [B, S]
         return position_ids
-        
+
      # ====================== 新增：批量文本编码函数 ======================
     @torch.no_grad()
     def encode_texts(self, texts_list):
@@ -429,7 +532,7 @@ class EventPredictionModel(nn.Module):
                 
         return img_emb
         
-    def forward(self, batch):
+    def forward(self, batch, epoch: int = 10**9):
         """
         前向传播：事件嵌入 → LLM → 多任务预测
         修改：全程使用基于时间戳的RoPE
@@ -456,37 +559,64 @@ class EventPredictionModel(nn.Module):
         masked_i_pos = None
         
         
-        # 融合：非 DecAlign 路径下仍用 fusion_proj；DecAlign 路径下三路分离（类型 / 文本 / 时间），图像在 DecAlign 之后合并
+        # 融合：非 DecAlign 路径下 fusion_proj；DecAlign 路径下对齐支路为 text / image / skipgram，时间在融合后拼接
         if self.fusion_required and not self.use_decalign:
             embs = [event_embeddings]
             if self.use_text:
                 embs.append(self.encode_texts(batch['texts']))
             if self.use_image:
                 embs.append(self.encode_images(batch['image_paths']))
+            if self.use_skipgram:
+                sk = batch['skipgram_embeddings'].to(self.device).to(event_embeddings.dtype)
+                embs.append(self.skipgram_proj(sk))
             event_embeddings = self.fusion_proj(torch.cat(embs, dim=-1))
 
         type_raw = batch['event_embeddings']
         decalign_dec = torch.tensor(0.0, device=self.device)
         decalign_hete = torch.tensor(0.0, device=self.device)
         decalign_homo = torch.tensor(0.0, device=self.device)
+        decalign_recon = torch.tensor(0.0, device=self.device)
+
+        if self.use_decalign:
+            lam_dec, lam_hete, lam_homo, lam_recon, eff_loss_ratio = self._align_schedule(epoch)
+        else:
+            lam_dec = lam_hete = lam_homo = lam_recon = 0.0
+            eff_loss_ratio = self.loss_ratio
 
         if self.use_decalign:
             if self.tem_enc_type != "TimePositionEncoding":
                 raise RuntimeError("use_decalign requires TimePositionEncoding.")
-            tem_emb = self.tem_enc(time_delta_seqs.to(type_raw.dtype))
-            if self.use_text:
-                text_emb = self.encode_texts(batch['texts']).to(type_raw.dtype)
-            else:
-                text_emb = self.decalign_text_null.expand(bsz, seq_len, -1).to(type_raw.dtype)
+            dtype = type_raw.dtype
+            text_emb, img_emb, skipgram_emb = self._modality_inputs_for_align(batch, bsz, seq_len, dtype)
+            tem_emb = self.tem_enc(time_delta_seqs.to(dtype))
             pad_m = batch_non_pad_mask.bool()
-            da = self.decalign_fusion(type_raw, text_emb, tem_emb, pad_m)
-            event_emb = da['event_hidden']
-            decalign_dec = da['dec_loss'].to(torch.float32)
-            decalign_hete = da['hete_loss'].to(torch.float32)
-            decalign_homo = da['homo_loss'].to(torch.float32)
-            if self.use_image:
-                img_e = self.encode_images(batch['image_paths']).to(type_raw.dtype)
-                event_emb = self.decalign_img_merge(torch.cat([event_emb, img_e], dim=-1))
+            event_emb = torch.zeros(bsz, seq_len, self.hidden_size, device=self.device, dtype=dtype)
+            idx_map = defaultdict(list)
+            for i, did in enumerate(dataset_ids):
+                idx_map[did].append(i)
+            wtot = float(bsz)
+            s_dec = s_hete = s_homo = s_recon = torch.tensor(0.0, device=self.device, dtype=torch.float32)
+            for did, idxs in idx_map.items():
+                ii = torch.tensor(idxs, device=self.device, dtype=torch.long)
+                da = self.align_fusion[did](
+                    text_emb.index_select(0, ii),
+                    img_emb.index_select(0, ii),
+                    skipgram_emb.index_select(0, ii),
+                    pad_m.index_select(0, ii),
+                )
+                partial = da["event_partial"]
+                te = tem_emb.index_select(0, ii)
+                merged = self.decalign_post_time(torch.cat([partial, te], dim=-1))
+                event_emb.index_copy_(0, ii, merged)
+                wg = float(len(idxs))
+                s_dec = s_dec + da["dec_loss"].to(torch.float32) * wg
+                s_hete = s_hete + da["hete_loss"].to(torch.float32) * wg
+                s_homo = s_homo + da["homo_loss"].to(torch.float32) * wg
+                s_recon = s_recon + da["recon_loss"].to(torch.float32) * wg
+            decalign_dec = s_dec / wtot
+            decalign_hete = s_hete / wtot
+            decalign_homo = s_homo / wtot
+            decalign_recon = s_recon / wtot
             outputs = self.llm(
                 inputs_embeds=event_emb,
                 output_hidden_states=True,
@@ -518,9 +648,10 @@ class EventPredictionModel(nn.Module):
         
         # ================== 总损失汇总 ==================
         total_loss = (
-            self.lambda_decalign_dec * decalign_dec
-            + self.lambda_decalign_hete * decalign_hete
-            + self.lambda_decalign_homo * decalign_homo
+            lam_dec * decalign_dec
+            + lam_hete * decalign_hete
+            + lam_homo * decalign_homo
+            + lam_recon * decalign_recon
         )
         
         
@@ -587,7 +718,7 @@ class EventPredictionModel(nn.Module):
 
                 RCA_loss = F.binary_cross_entropy_with_logits(logits, targets)
 
-            total_loss += self.loss_ratio * (type_loss*1 + time_loss) + self.RCA_ratio * RCA_loss + self.JEPA_ratio * JEPA_loss
+            total_loss += eff_loss_ratio * (type_loss*1 + time_loss) + self.RCA_ratio * RCA_loss + self.JEPA_ratio * JEPA_loss
             
             '''
             # ---------- 可学习权重：自适应平衡 type_loss 和 time_loss ----------
@@ -627,6 +758,9 @@ class EventPredictionModel(nn.Module):
                 embs.append(self.encode_texts(batch['texts']))
             if self.use_image:
                 embs.append(self.encode_images(batch['image_paths']))
+            if self.use_skipgram:
+                sk = batch['skipgram_embeddings'].to(self.device).to(event_embeddings.dtype)
+                embs.append(self.skipgram_proj(sk))
             event_embeddings = self.fusion_proj(torch.cat(embs, dim=-1))
 
         type_raw = batch['event_embeddings']
@@ -635,17 +769,26 @@ class EventPredictionModel(nn.Module):
         if self.use_decalign:
             if self.tem_enc_type != "TimePositionEncoding":
                 raise RuntimeError("use_decalign requires TimePositionEncoding.")
-            tem_emb = self.tem_enc(time_delta_seqs.to(type_raw.dtype))
-            if self.use_text:
-                text_emb = self.encode_texts(batch['texts']).to(type_raw.dtype)
-            else:
-                text_emb = self.decalign_text_null.expand(bsz, seq_len, -1).to(type_raw.dtype)
+            dtype = type_raw.dtype
+            text_emb, img_emb, skipgram_emb = self._modality_inputs_for_align(batch, bsz, seq_len, dtype)
+            tem_emb = self.tem_enc(time_delta_seqs.to(dtype))
             pad_m = batch_non_pad_mask.bool()
-            da = self.decalign_fusion(type_raw, text_emb, tem_emb, pad_m)
-            event_emb = da['event_hidden']
-            if self.use_image:
-                img_e = self.encode_images(batch['image_paths']).to(type_raw.dtype)
-                event_emb = self.decalign_img_merge(torch.cat([event_emb, img_e], dim=-1))
+            event_emb = torch.zeros(bsz, seq_len, self.hidden_size, device=self.device, dtype=dtype)
+            idx_map = defaultdict(list)
+            for i, did in enumerate(dataset_ids):
+                idx_map[did].append(i)
+            for did, idxs in idx_map.items():
+                ii = torch.tensor(idxs, device=self.device, dtype=torch.long)
+                da = self.align_fusion[did](
+                    text_emb.index_select(0, ii),
+                    img_emb.index_select(0, ii),
+                    skipgram_emb.index_select(0, ii),
+                    pad_m.index_select(0, ii),
+                )
+                partial = da["event_partial"]
+                te = tem_emb.index_select(0, ii)
+                merged = self.decalign_post_time(torch.cat([partial, te], dim=-1))
+                event_emb.index_copy_(0, ii, merged)
             outputs = self.llm(
                 inputs_embeds=event_emb,
                 output_hidden_states=True,

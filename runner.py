@@ -32,7 +32,12 @@ class Runner:
         for attr in ['gpu', 'model_name', 'load_model_path', 'evaluate_only', 'batch_size', 'epoch', 'peft_type', 
                     'use_mixlognormal', 'use_prompt', 'type_embeddings_path', 'time_scale', 'patience', 'model_path',
                     'lora_lr', 'opt_lr', 'train_subset_ratio', 'loss_ratio', 'RCA_ratio', 'JEPA_ratio', 'tem_enc_type', 'use_image', 'use_text',
+                    'use_skipgram', 'skipgram_embeddings_path',
                     'RCA_type', 'lambda_decalign_dec', 'lambda_decalign_hete', 'lambda_decalign_homo',
+                    'lambda_decalign_recon', 'align_pretrain_epochs',
+                    'lambda_decalign_dec_warm', 'lambda_decalign_hete_warm', 'lambda_decalign_homo_warm', 'lambda_decalign_recon_warm',
+                    'lambda_decalign_dec_main', 'lambda_decalign_hete_main', 'lambda_decalign_homo_main', 'lambda_decalign_recon_main',
+                    'loss_ratio_warm', 'loss_ratio_main',
                     'decalign_d_model', 'decalign_num_heads', 'decalign_nlevels', 'decalign_num_prototypes',
                     'decalign_conv1d_kernel_size', 'decalign_attn_dropout', 'decalign_attn_dropout_a', 'decalign_attn_dropout_v',
                     'decalign_lambda_ot', 'decalign_ot_num_iters']:
@@ -63,16 +68,20 @@ class Runner:
             self.model_config.batch_size, num_workers=0,
             train_subset_ratio=self.model_config.train_subset_ratio,
             type_embeddings_path=self.type_embeddings_path,
-            use_prompt = self.model_config.use_prompt,
-            use_root_cause = self.use_root_cause
+            use_prompt=self.model_config.use_prompt,
+            use_root_cause=self.use_root_cause,
+            skipgram_embeddings_path=getattr(self.model_config, "skipgram_embeddings_path", None),
+            use_skipgram=bool(getattr(self.model_config, "use_skipgram", False)),
         )
         # dev/test
         self.dev_loaders = {
             name: build_multiloader(
                 {name: spec}, 'dev', self.model_config.batch_size,
                 type_embeddings_path=self.type_embeddings_path,
-                use_prompt = self.model_config.use_prompt,
-                use_root_cause = self.use_root_cause
+                use_prompt=self.model_config.use_prompt,
+                use_root_cause=self.use_root_cause,
+                skipgram_embeddings_path=getattr(self.model_config, "skipgram_embeddings_path", None),
+                use_skipgram=bool(getattr(self.model_config, "use_skipgram", False)),
             )
             for name, spec in self.data_config.items()
         }
@@ -80,8 +89,10 @@ class Runner:
             name: build_multiloader(
                 {name: spec}, 'test', self.model_config.batch_size,
                 type_embeddings_path=self.type_embeddings_path,
-                use_prompt = self.model_config.use_prompt,
-                use_root_cause = self.use_root_cause
+                use_prompt=self.model_config.use_prompt,
+                use_root_cause=self.use_root_cause,
+                skipgram_embeddings_path=getattr(self.model_config, "skipgram_embeddings_path", None),
+                use_skipgram=bool(getattr(self.model_config, "use_skipgram", False)),
             )
             for name, spec in self.data_config.items()
         }
@@ -153,7 +164,7 @@ class Runner:
                     batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
                                 for k, v in batch.items()}
                     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                        loss = self.model(batch)
+                        loss = self.model(batch, epoch=epoch)
                     self.opt.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)

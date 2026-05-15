@@ -13,7 +13,9 @@ valid_freq: 1
 model_path: ../../zhouyongkang/Event_squence/LLM/
 use_image: False
 use_text: False
-model_name: Qwen2-0.5B
+use_skipgram: false
+skipgram_embeddings_path: ''
+model_name: deepseek-7b
 peft_type: lora  # 或 'freeze'
 lora_rank: 8  # 仅q,v矩阵
 num_mixture: 2  # MixLogNormal组件数
@@ -34,10 +36,22 @@ use_decalign: true
 lambda_decalign_dec: 0.1
 lambda_decalign_hete: 0.1
 lambda_decalign_homo: 0.1
+lambda_decalign_recon: 0.0
+align_pretrain_epochs: 5
+lambda_decalign_dec_warm: 0.1
+lambda_decalign_hete_warm: 0.1
+lambda_decalign_homo_warm: 0.1
+lambda_decalign_recon_warm: 0.0
+lambda_decalign_dec_main: 0.1
+lambda_decalign_hete_main: 0.1
+lambda_decalign_homo_main: 0.1
+lambda_decalign_recon_main: 0.0
+loss_ratio_warm: 1.0
+loss_ratio_main: 1.0
 decalign_d_model: 64
 decalign_num_heads: 4
 decalign_nlevels: 2
-decalign_num_prototypes: 10
+decalign_num_prototypes: 10  # 已由每数据集 2×num_event_types 取代；保留仅作 CLI 兼容
 decalign_conv1d_kernel_size: 1
 decalign_attn_dropout: 0.1
 decalign_attn_dropout_a: 0.1

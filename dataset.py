@@ -95,9 +95,17 @@ class DataCollatorEventEmbedding:
     1. 对每个事件：type_id → 查表得E_type，delta_t → Time2Vec得E_time
     2. token_i = E_type[i] + E_time[i]
     3. 右对齐预测：最后一个token只参与loss计算
+    Optional skipgram table (same layout as type_embeddings) for ModalityAlignFusion.
     """
-    def __init__(self, type_embeddings: Dict[str, torch.Tensor], max_event: int=128, use_prompt: bool=False):
+    def __init__(
+        self,
+        type_embeddings: Dict[str, torch.Tensor],
+        max_event: int = 128,
+        use_prompt: bool = False,
+        skipgram_embeddings: Optional[Dict[str, torch.Tensor]] = None,
+    ):
         self.type_embeddings = type_embeddings  # Dict[dataset_name, tensor(K, d)]
+        self.skipgram_embeddings = skipgram_embeddings
         self.max_event = max_event
         self.use_prompt = use_prompt
         if use_prompt:
@@ -130,7 +138,13 @@ class DataCollatorEventEmbedding:
         root_cause = torch.zeros(batch_size, dtype=torch.long)
         batch_image_paths = []
         batch_texts = []
-        
+        skip_dim = None
+        if self.skipgram_embeddings is not None:
+            skip_dim = next(iter(self.skipgram_embeddings.values())).shape[1]
+            skipgram_embeddings = torch.zeros(batch_size, total_len, skip_dim, dtype=torch.bfloat16)
+        else:
+            skipgram_embeddings = None
+
         for i, item in enumerate(raw_batch):
             t, d, k = item['time_seqs'], item['time_delta_seqs'], item['type_seqs']
             img_seq = item['image_path_seqs']
@@ -150,7 +164,10 @@ class DataCollatorEventEmbedding:
             
             # 获取嵌入 (K, d) → (L, d)
             type_emb = self.type_embeddings[dataset_id][k]  # shape: [L, hidden_size]
-            
+            if skipgram_embeddings is not None:
+                sg_emb = self.skipgram_embeddings[dataset_id][k]
+                skipgram_embeddings[i, -L:, :] = sg_emb
+
             # 时间编码将在模型中动态计算，这里只保存原始值
             # 每个序列包括三部分:  [左填充pad_len + prompt长度prompt_len + 事件序列L]
             event_embeddings[i, -L:, :] = type_emb
@@ -162,7 +179,7 @@ class DataCollatorEventEmbedding:
             root_cause[i] = rc
             batch_image_paths.append([''] * pad_len + img_seq)
             batch_texts.append([''] * pad_len + txt_seq)
-        return {
+        out = {
             'event_embeddings': event_embeddings,              # [B, S, D]
             'time_seqs': time_seqs,                            # [B, S]
             'time_delta_seqs': time_delta_seqs,                # [B, S]
@@ -175,11 +192,15 @@ class DataCollatorEventEmbedding:
             'dataset_id': [item['dataset_id'] for item in raw_batch]
 
         }
+        if skipgram_embeddings is not None:
+            out['skipgram_embeddings'] = skipgram_embeddings
+        return out
 
 
 # ------------------ 对外唯一入口 ------------------
-def build_multiloader(data_config: Dict, split: str, batch_size: int, train_subset_ratio=1.0,  
-                      num_workers=0, type_embeddings_path: str = None, use_prompt: bool=False, use_root_cause=False):
+def build_multiloader(data_config: Dict, split: str, batch_size: int, train_subset_ratio=1.0,
+                      num_workers=0, type_embeddings_path: str = None, use_prompt: bool = False,
+                      use_root_cause=False, skipgram_embeddings_path: str = None, use_skipgram: bool = False):
     """
     data_config 格式:
         retweet:
@@ -192,10 +213,23 @@ def build_multiloader(data_config: Dict, split: str, batch_size: int, train_subs
     """
     # 加载类型嵌入
     if type_embeddings_path:
-        type_embeddings = torch.load(type_embeddings_path, weights_only=True)
+        try:
+            type_embeddings = torch.load(type_embeddings_path, weights_only=True)
+        except TypeError:
+            type_embeddings = torch.load(type_embeddings_path)
         type_embeddings = {k: v.to(torch.bfloat16) for k, v in type_embeddings.items()}
     else:
         type_embeddings = None
+
+    skipgram_embeddings = None
+    if use_skipgram:
+        if not skipgram_embeddings_path:
+            raise ValueError("use_skipgram=True requires skipgram_embeddings_path")
+        try:
+            skipgram_embeddings = torch.load(skipgram_embeddings_path, weights_only=True)
+        except TypeError:
+            skipgram_embeddings = torch.load(skipgram_embeddings_path)
+        skipgram_embeddings = {k: v.to(torch.bfloat16) for k, v in skipgram_embeddings.items()}
 
     sub_datasets, weights = [], []
     for name, spec in data_config.items():
@@ -252,7 +286,11 @@ def build_multiloader(data_config: Dict, split: str, batch_size: int, train_subs
         # 验证/测试：简单 Concat
         multi_ds = ConcatDataset(sub_datasets)
 
-    collator = DataCollatorEventEmbedding(type_embeddings, use_prompt=use_prompt)
+    collator = DataCollatorEventEmbedding(
+        type_embeddings,
+        use_prompt=use_prompt,
+        skipgram_embeddings=skipgram_embeddings,
+    )
     loader = DataLoader(multi_ds,
                         batch_size=batch_size,
                         shuffle=(split=='train'),

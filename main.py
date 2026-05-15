@@ -18,6 +18,10 @@ def main():
                         help='是否使用图片编码器，开启则加载图片并编码')
     parser.add_argument('--use_text',action='store_true',default=False, 
                         help='是否使用文本编码器，开启则加载文本并编码')
+    parser.add_argument('--use_skipgram', action='store_true', default=False,
+                        help='是否使用 skipgram 嵌入表（需 skipgram_embeddings_path）')
+    parser.add_argument('--skipgram_embeddings_path', type=str, default=None,
+                        help='skipgram 嵌入字典 .pt 路径（与 type_embeddings 同结构）')
     parser.add_argument('--model_config_path', type=str, required=False, default=model_config_path,
                         help='Path of model configuration yaml.')
 

@@ -1,8 +1,42 @@
 """Smoke tests for DecAlign event fusion (no GPU / no LLM)."""
 import unittest
 import torch
-from decalign_event import DecAlignEventFusion
+from decalign_event import DecAlignEventFusion, ModalityAlignFusion
 from decalign_transformer import build_causal_attn_mask
+
+
+class TestModalityAlignFusion(unittest.TestCase):
+    def test_m2_forward(self):
+        B, S, E, H = 2, 8, 24, 40
+        m = ModalityAlignFusion(
+            embed_dim=E,
+            hidden_size=H,
+            d_model=16,
+            num_heads=4,
+            nlevels=1,
+            num_prototypes=4,
+            active_indices=(0, 2),
+        )
+        pad = torch.ones(B, S, dtype=torch.bool)
+        x = torch.randn(B, S, E)
+        out = m(x, x, x, pad)
+        self.assertEqual(out["event_partial"].shape, (B, S, H))
+
+    def test_m1_forward(self):
+        B, S, E, H = 2, 5, 16, 32
+        m = ModalityAlignFusion(
+            embed_dim=E,
+            hidden_size=H,
+            d_model=16,
+            num_heads=4,
+            nlevels=1,
+            num_prototypes=3,
+            active_indices=(1,),
+        )
+        pad = torch.ones(B, S, dtype=torch.bool)
+        x = torch.randn(B, S, E)
+        out = m(x, x, x, pad)
+        self.assertEqual(out["event_partial"].shape, (B, S, H))
 
 
 class TestDecAlignEvent(unittest.TestCase):
